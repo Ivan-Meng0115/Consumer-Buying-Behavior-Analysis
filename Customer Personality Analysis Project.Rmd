@@ -1,0 +1,449 @@
+---
+title: "Customer Personality Analysis"
+author: "Ivan Meng"
+output: html_document
+---
+
+
+```{r global_options, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE, eval = TRUE, fig.align = "center", warning = F, message = F, R.options=list(max.print=100,dplyr.print_max=100))
+
+```
+
+#### Title and Introduction
+In this project, we choose the Customer Personality Analysis as our dataset for further exploration. This dataset is a comprehensive record on a group of customers daily spend and correlating values. It contains 29 variables (columns) and 2240 observations (rows), which includes values like customers' data of birth, education level, amount of money spend on wine, and etc. This dataset was acquired from Kaggle and can be accessed through https://www.kaggle.com/datasets/imakash3011/customer-personality-analysis?resource=download.
+
+There are several reasons we choose this dataset. One of the most important reason is that customers are always the main concern of a company. A better understanding of customers behavior can help the company to conduct a more efficient products service accordingly. Specifically speaking, this analysis help a company to modify its product based on its target customers from different types of customer segments. For example, a company can decide which particular group of customer they should spend mony on to market for a specific type of product based on this analysis. 
+
+Through this analysis, we expected to find a common trend among the various customers and hopefully can split them into different groups based on the cluster results. We may need to get rid of several columns of data before the actual analysis to clean up any unnecessary noise that may affect the visulization. 
+
+
+#### Load the packages `tidyverse`, `factoextra`, `cluster`, and `factoextra`.
+
+```{r}
+# import packages
+library(tidyverse) 
+library(factoextra) 
+library(cluster) 
+library(factoextra) 
+library(naniar) 
+library(corrplot) 
+library("readxl") 
+library(plotROC)
+```
+
+#### Importing Data
+```{r}
+# import dataset
+customers <- read.delim("~/Downloads/marketing_campaign.csv") 
+# customers <-read_excel("campaign.xlsx")
+# view the top 6 rows of dataset
+head(customers)
+```
+
+#### Display dataset
+```{r}
+# Get the information of the dataset
+glimpse(customers)
+```
+
+
+#### Tidying data
+```{r}
+# Summarize the missing values in the data
+miss_var_summary(customers)
+
+# Check the which variables are numeric in the dataset.
+sapply(customers, is.numeric)
+```
+From the above output, we learn that the income variabes has 24 rows of missing data in the dataset. Since the percentage is very low, we can drop all the missing values and would not influence our analysis. The variables: Education, Marital_Status, and Dt_Customer are categorical, the rest variables in the dataset are numerical. 
+
+```{r}
+# remove missing values
+customers <- na.omit(customers)
+dim(customers)
+```
+Create a new variable "Age" of customer from "Year of Birth" by current year "2020".
+```{r}
+# Create variable "Age"
+customers <- customers %>%
+  mutate(Age = 2022-customers$Year_Birth)
+```
+
+Combine variables "Teenhome" and "Kidhome" into a new variable "Child" to show how many children the customer have. 
+```{r}
+# create variable "Child"
+customers <- customers %>%
+  mutate(Child_home = Kidhome+Teenhome)
+```
+
+Create a variable "Total_expense" of products for each customers. 
+```{r}
+# create variable "Total_expense"
+customers <- customers %>%
+  mutate(Total_expense = MntMeatProducts + 
+                         MntFishProducts + 
+                         MntWines + 
+                         MntFruits + 
+                         MntSweetProducts + 
+                         MntGoldProds)
+```
+
+
+Use boxplot to find the outliers in the dataset.  
+```{r}
+# create variable "Accepted"
+customers <- customers %>%
+  mutate(Accepted = AcceptedCmp1 +
+                    AcceptedCmp2 +
+                    AcceptedCmp3 +
+                    AcceptedCmp4 +
+                    AcceptedCmp5)
+```
+
+Plot the data to find the outliers  
+```{r}
+# Boxplot of the income 
+ggplot(customers, aes(y = Income)) + geom_boxplot()
+
+# Boxplot of age
+ggplot(customers, aes(Age)) + geom_boxplot()
+
+# get the valuues of Q1, Q3, and IQR
+summary(customers$Income)
+IQR(customers$Income)
+summary(customers$Age)
+IQR(customers$Age)
+
+#remove the outliers of the dataset
+customers <- customers %>% 
+  filter(Income < 1300000 & Age < 100)
+
+```
+#### Exploratory Data Analysis
+
+```{r}
+# Find the correlations among the 14 variables
+customers_nums <- customers %>%
+  select(Income, Child_home, MntWines, MntFruits, MntMeatProducts, 
+         MntFishProducts, MntSweetProducts, NumDealsPurchases,  
+         MntGoldProds, NumWebPurchases, NumCatalogPurchases, 
+         NumStorePurchases, NumWebVisitsMonth) %>%
+  as.data.frame()
+```
+
+Heatmap with correlation matrix 
+```{r}
+# create correlation matrix
+cor(customers_nums, use = "pairwise.complete.obs") %>%
+  # Save as a data frame
+  as.data.frame %>%
+  # Convert row names to an explicit variable
+  rownames_to_column %>%
+  # Pivot so that all correlations appear in the same column
+  pivot_longer(-1, names_to = "other_var", values_to = "correlation") %>%
+  ggplot(aes(rowname, other_var, fill = correlation)) +
+  # Heatmap with geom_tile
+  geom_tile() +
+  # Change the scale to make the middle appear neutral
+  scale_fill_gradient2(low="red",mid="white",high="blue") +
+  # Overlay values
+  geom_text(aes(label = round(correlation,2)), color = "black", size = 2) +
+  # Give title and labels
+  labs(title = "Correlation matrix for the dataset customer", x = "variable 1", y = "variable 2") +
+  theme(axis.text.x = element_text(angle = 90))
+```
+
+A correlation matrix with univariate and bivariate graphs
+```{r}
+# A package for building a correlation matrix with univariate and bivariate graphs
+# install.packages(psych)
+library(psych)
+pairs.panels(customers_nums, 
+             method = "pearson", # correlation coefficient method
+             hist.col = "blue", # color of histogram 
+             smooth = FALSE, density = FALSE, ellipses = FALSE)
+```
+Marital status of customers in each category
+```{r}
+# calculate number of customers in each marital status category
+plotdata <- customers %>% count(Marital_Status)
+
+# plot the distribution of race
+ggplot(plotdata, aes(x = Marital_Status, y = n)) + 
+  geom_bar(fill = "cornflowerblue", color="black", stat = "identity") +
+  geom_text(aes(label = n), vjust=-0.5) + 
+  labs(x = "Marital Status", y = "Number", title = "Customers Marital Status") 
+```
+Observations!
+There are 857 (38%) customers in the dataset are "Married".
+There are 571 (25%) customers in the dataset are "Together".
+There are 470 (21%) customers in the dataset are "Single".
+There are 231 (10%) customers in the dataset are "Divorced".
+There are 76 (3%) customers in the dataset are "Widow".
+There is no significant amount of customers who are "Alone","Absurd"and "YOLO".
+Most of our customers are in couple.
+
+
+
+Education level of customers in each category
+```{r}
+# calculate number of participants in each marital status category
+plotdata <- customers %>% count(Education)
+
+# plot the distribution of race
+ggplot(plotdata, aes(x = Education, y = n)) + 
+  geom_bar(fill = "cornflowerblue", color="black", stat = "identity") +
+  geom_text(aes(label = n), vjust=-0.5) + 
+  labs(x = "Education Level", y = "Number", title = "Customers Education Level") 
+```
+Observations!
+There are 1115 (50%) of customers in the dataset are 'Graduate'.
+There are 480 (21%) of customers in the dataset possess 'PhD' degree.
+There are 365 (16.5%) of customers in the dataset possess 'Master' degree.
+There are 198 (9%) of customers in the dataset possess '2n cycle'.
+There are 54 (2%) of customers in the dataset possess 'Basic' education.
+
+
+### Clustering
+```{r}
+# scale the dataset and find the number of clusters needed
+customers_scale = customers %>% 
+  select(Income,Recency,Age,Total_expense) %>% 
+  scale
+
+# we choose to use two different method to validify the number of clusters
+fviz_nbclust(customers_scale, kmeans, method = "wss")
+fviz_nbclust(customers_scale, kmeans, method = "silhouette")
+```
+Based on the graph, we can conclude that a number of cluster of 2 should be a good choice for this dataset. However, the average silhouette width is about 0.3, which is fairly low. This indicated that the structure of this dataset is weak and could be artificial.
+
+```{r}
+# calculate kmeans result with previously decided number of clusters
+kmeans_cus <- customers_scale %>% kmeans(2)
+# visualization with `fviz_cluster()`
+fviz_cluster(kmeans_cus, data = customers_scale)
+```
+Based on the plot, there is one outlier that differentiate significantly from all other dataset. After examine it in the dataset, we decide to exclude it to get a better visualization. 
+
+```{r}
+customers_scale <- customers_scale[-c(2207),]
+# calculate kmeans result with previously decided number of clusters
+kmeans_cus <- customers_scale %>% kmeans(2)
+# visualization with `fviz_cluster()`
+fviz_cluster(kmeans_cus, data = customers_scale)
+```
+In this plot, the two clusters did not have a clear separation from each other. They have a heavily overlapping area and everything sort of remains in the center. To better understand these two clusters, we can perform a ggpair upon the dataset. 
+```{r}
+# we can also do a ggpair() to help us better visualize how things relate to each other
+customer_pam <- customers_scale %>%
+  pam(k = 2)
+
+# we need to also remove the oulier in customer to match the updated dataset
+customers <- customers[-c(2207),]
+
+# add a new column cluster
+customer_npam <- customers %>%
+  mutate(cluster = as.factor(customer_pam$clustering))
+
+# perform ggpair
+library(GGally)
+ggpairs(customer_npam, columns = c("Income","Recency","Age","Total_expense"), aes(color = cluster))
+```
+As we can see in the plot, there are several findings we can conclude. First of all, the only valid correlation among all four variables we choose is between Total expense and income, which has a correlation factor of 0.793. All the other factor do not have a strong correlation with one anther. Another interesting relationship we found is that when the recency is the same, the customers from cluster 1 always have a higher total expense compare to customers from cluster 2. This relationship is also shown in the Age vs. Total_expense plot. In general, customers from cluster 1 seems to spend more money compare to customers from cluster 2 when all other conditions are the same.
+
+To further find details about these two clusters, we choose to calculate the average of each of these four variables to see if they have any difference.
+```{r}
+customer_npam %>% group_by(cluster) %>%summarise(mean_Income = mean(Income))
+customer_npam %>% group_by(cluster) %>%summarise(mean_Recency= mean(Recency))
+customer_npam %>% group_by(cluster) %>%summarise(mean_Age = mean(Age))
+customer_npam %>% group_by(cluster) %>%summarise(mean_Total_expense= mean(Total_expense))
+```
+Despite the little different in the mean age and recency, we found a interesting relationship in the mean income and total expense. In general, the mean income of customers from cluster 1 is way higher than customers from cluster 2. The actual income from cluster 1 is about twice the number compare to that from cluster 2. This make sense and gives a reaonable explanation for why on the previous ggpairs customers from cluster 1 always spend more compare to customers from cluster 2. Another interesting fact we found is that the average total expense for customers in cluster 1 is also way higher compare to that from cluster 2. But instead of two times higher like it was in the income, the total expense from cluster 1 is 10 times higher compare to cluster 2. 
+
+
+
+### Dimensionality reduction
+In this part, we choose to conduct PCA over the same four variables we did before to see if there is any interesting finding
+```{r}
+# first conduct PCA using prcomp()
+pca_customers <- customers_scale %>%
+  prcomp()
+
+# Look at percentage of variance explained for each PC in a table
+get_eigenvalue(pca_customers)
+
+# Visualize percentage of variance explained for each PC in a scree plot
+fviz_eig(pca_customers, addlabels = TRUE, ylim = c(0, 70))
+```
+As we can see in the plot, in order to keep about 80% of the variance, first 3 components should be kept. To further find out information about each of the PCs, we can visualize the contribution of each individual customers for each PC. 
+
+
+```{r}
+# We can find the contributions within each of the first 2 PCs
+fviz_contrib(pca_customers, choice = "ind", axes = 1, top = 10)
+fviz_contrib(pca_customers, choice = "ind", axes = 2, top = 10)
+```
+As we can see, the average contribution for each individuals are very low, which is around 0.5%. The top 10 contribution for each PCs are quite different are all way above the average line. We can keep on discussing these two PCs by visualizing the contribution of variables
+
+```{r}
+# Visualize the 5 top contributions of the variables to the PCs as a percentage
+fviz_contrib(pca_customers, choice = "var", axes = 1, top = 5) # on PC1
+fviz_contrib(pca_customers, choice = "var", axes = 2, top = 5) # on PC2
+```
+Based on the graph, we can see that for PC1, total expense and income contribute the most, which is about 50% and 35% respectively. On the other hand, Recency has the most contribution for PC2, which is about 98%.
+
+
+Now we can visualize all the individuals and variables together to have a better view.
+```{r}
+# Visualize the individuals according to PC1 and PC2
+fviz_pca_ind(pca_customers, 
+             geom.ind = "point", # show points only (nbut not "text")
+             palette = c("#00AFBB", "#E7B800", "#FC4E07"),
+             addEllipses = TRUE, # Concentration ellipses
+             legend.title = "outcome"
+             )
+      
+
+# Visualize the contributions of the variables to the PCs in a correlation circle
+fviz_pca_var(pca_customers, col.var = "black", 
+             repel = TRUE) # Avoid text overlapping
+
+fviz_pca_biplot(pca_customers)
+```
+As shown in the cirlce plot, we can see that both income and total expense has a highly negative relationship with dimension 1, but they both have a weak relationship with dimension 2. On the other hand, recency has a highly positive relationship with dimension 2, but a weak relationship with dimension 1. The plot also tells that total expense and the income are highly conrrelated, whereas recency is not correlated with any other 3 elements. These relationship is validated based on the early contribution plot that showed the contribution for each dimension. 
+
+
+### Classification and Cross-validation
+Fit a logistic regression model 
+```{r}
+fit <- glm(Response ~ Income + Recency + Age + Total_expense, data = customers, family = "binomial")
+summary(fit)
+```
+
+```{r}
+# Calculate a predicted probability
+log_customers <- customers %>% 
+  mutate(score = predict(fit, type = "response"),
+         predicted = ifelse(score < 0.5, 0, 1)) %>%
+  select(Total_expense, Response, score, predicted)
+```
+
+```{r}
+# Visualize predicted and actual transmissions
+ggplot(log_customers, aes(Total_expense, Response)) + 
+  geom_point(aes(color = as.factor(predicted))) +
+  geom_smooth(method = "glm", se = FALSE, 
+              method.args = list(family = "binomial")) +
+  ylim(0,1) + 
+  geom_hline(yintercept = 0.5, lty = 2)
+
+```
+```{r}
+ROC <- ggplot(log_customers) + 
+  geom_roc(aes(d = Response, m = score), n.cuts = 0)
+ROC
+```
+
+calculate ROC
+```{r}
+# Calculate the area under the curve with function calc_auc()
+calc_auc(ROC)
+```
+
+Separate the set into a training set to train the model and a test set to test the model
+```{r}
+# Select a fraction of the data for training purposes
+train <- sample_frac(customers, size = 0.5)
+
+# Select the rest of the data for the test dataset
+test <- anti_join(customers, train, by = "ID")
+```
+
+
+Then we fit the model on the train set
+```{r}
+# Fit a logistic model in the 
+fit <- glm(Response ~ Income, data = train, family = "binomial")
+
+# Results in a data frame for training data
+df_train <- data.frame(
+  probability = predict(fit, newdata = train),
+  outcome = train$Response,
+  data_name = "training")
+
+# Results in a data frame for test data
+df_test <- data.frame(
+  probability = predict(fit, newdata = test),
+  outcome = test$Response,
+  data_name = "test")
+
+# Combined results
+df_combined <- rbind(df_train, df_test)
+```
+
+Let’s evaluate the performance of our classifier on the train and test sets
+```{r}
+ROC <- ggplot(df_combined) + 
+  geom_roc(aes(d = outcome, m = probability, color = data_name, n.cuts = 0))
+ROC
+```
+The receiver operating characteristic (ROC) curve evaluates the performance of binary classification algorithms. It provides a graphical representation of a classifier's performance. From the graph above, we can learn the factor income is not the main factor to predict the response of customers. We also learn that the variables "Response" and "Income" have low correlations.  
+
+
+We can compare the AUC based on the train and test set
+```{r}
+# Compare test and training AUCs
+calc_auc(ROC)
+```
+
+k-fold cross-validation
+```{r}
+# Choose number of folds
+k = 10 
+
+# Randomly order rows in the dataset
+data <- customers[sample(nrow(customers)), ] 
+
+# Create k folds from the dataset
+folds <- cut(seq(1:nrow(data)), breaks = k, labels = FALSE)
+```
+
+
+Fit the model and repeat the process for each 𝑘-fold
+```{r}
+# Use a for loop to get diagnostics for each test set
+diags_k <- NULL
+
+for(i in 1:k){
+  # Create training and test sets
+  train <- data[folds != i, ] # all observations except in fold i
+  test <- data[folds == i, ]  # observations in fold i
+  
+  # Train model on training set (all but fold i)
+  fit <- glm(Response ~ Income, data = train, family = "binomial")
+  
+  # Test model on test set (fold i)
+  df <- data.frame(
+    probability = predict(fit, newdata = test, type = "response"),
+    outcome = test$Response)
+  
+  # Consider the ROC curve for the test dataset
+  ROC <- ggplot(df) + 
+    geom_roc(aes(d = outcome, m = probability, n.cuts = 0))
+
+  # Get diagnostics for fold i (AUC)
+  diags_k[i] <- calc_auc(ROC)$AUC
+}
+```
+
+Finally, find the average performance on new data
+```{r}
+# Average performance 
+mean(diags_k)
+```
+
+```{r, echo=F}
+## DO NOT DELETE THIS BLOCK!
+Sys.info()
+```
